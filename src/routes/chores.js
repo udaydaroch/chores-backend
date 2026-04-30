@@ -12,11 +12,13 @@ router.get('/', auth, async (req, res) => {
     const targetDate = date || new Date().toISOString().split('T')[0];
     const dayOfWeek = new Date(targetDate + 'T12:00:00Z').getDay(); // 0=Sun, 6=Sat
 
-    // Get all active chores that apply to this date
+    // Get all active chores that apply to this date and either assigned to user or open to everyone
     const chores = await sql`
       SELECT 
-        c.id, c.title, c.created_by, c.repeat_type, c.repeat_days, c.repeat_weekdays,
+        c.id, c.title, c.created_by, c.assigned_to, c.repeat_type, c.repeat_days, c.repeat_weekdays,
+        c.due_time, c.notify_before_minutes,
         c.created_at, u.username as creator_name, u.avatar as creator_avatar,
+        au.username as assigned_to_name, au.avatar as assigned_to_avatar,
         comp.id as completion_id,
         comp.completed_by,
         cu.username as completer_name,
@@ -25,6 +27,7 @@ router.get('/', auth, async (req, res) => {
         comp.date as completed_date
       FROM chores c
       LEFT JOIN users u ON c.created_by = u.id
+      LEFT JOIN users au ON c.assigned_to = au.id
       LEFT JOIN chore_completions comp ON comp.chore_id = c.id AND comp.date = ${targetDate}
       LEFT JOIN users cu ON comp.completed_by = cu.id
       WHERE c.is_active = TRUE
@@ -33,7 +36,8 @@ router.get('/', auth, async (req, res) => {
           OR (c.repeat_type = 'weekdays' AND ${dayOfWeek} = ANY(c.repeat_weekdays))
           OR (c.repeat_type = 'none' AND c.created_at::date = ${targetDate}::date)
         )
-      ORDER BY c.created_at ASC
+        AND (c.assigned_to IS NULL OR c.assigned_to = ${req.user.id})
+      ORDER BY c.due_time ASC NULLS LAST, c.created_at ASC
     `;
 
     res.json({ chores, date: targetDate });
@@ -46,20 +50,29 @@ router.get('/', auth, async (req, res) => {
 // Add a chore
 router.post('/', auth, async (req, res) => {
   try {
-    const { title, repeat_type = 'none', repeat_weekdays = null } = req.body;
+    const { title, repeat_type = 'none', repeat_weekdays = null, assigned_to = null, due_time = null, notify_before_minutes = 60 } = req.body;
     if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
 
     const [chore] = await sql`
-      INSERT INTO chores (title, created_by, repeat_type, repeat_weekdays)
-      VALUES (${title.trim()}, ${req.user.id}, ${repeat_type}, ${repeat_weekdays})
+      INSERT INTO chores (title, created_by, repeat_type, repeat_weekdays, assigned_to, due_time, notify_before_minutes)
+      VALUES (${title.trim()}, ${req.user.id}, ${repeat_type}, ${repeat_weekdays}, ${assigned_to}, ${due_time}, ${notify_before_minutes})
       RETURNING *
     `;
 
     // Notify others
     const [creator] = await sql`SELECT username, avatar FROM users WHERE id = ${req.user.id}`;
+    let notificationBody = `${creator.avatar} ${creator.username} added: ${title}`;
+    
+    if (assigned_to) {
+      const [assignedUser] = await sql`SELECT username, avatar FROM users WHERE id = ${assigned_to}`;
+      notificationBody += ` (for ${assignedUser.avatar} ${assignedUser.username})`;
+    } else {
+      notificationBody += ' (for everyone)';
+    }
+
     await sendNotificationToAll(
-      { title: '🧹 New Chore Added!', body: `${creator.avatar} ${creator.username} added: ${title}` },
-      req.user.id
+      { title: '🧹 New Chore Added!', body: notificationBody },
+      null
     );
 
     res.status(201).json(chore);
@@ -96,7 +109,7 @@ router.post('/:id/complete', auth, async (req, res) => {
       const [user] = await sql`SELECT username, avatar FROM users WHERE id = ${req.user.id}`;
       await sendNotificationToAll(
         { title: '✅ Chore Done!', body: `${user.avatar} ${user.username} completed: ${chore.title}` },
-        req.user.id
+        null
       );
 
       res.json({ completed: true, completion: comp });
@@ -121,6 +134,4 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-
 export default router;
-

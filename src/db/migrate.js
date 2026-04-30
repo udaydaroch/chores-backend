@@ -31,9 +31,12 @@ async function migrate() {
       id SERIAL PRIMARY KEY,
       title TEXT NOT NULL,
       created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      assigned_to INTEGER REFERENCES users(id) ON DELETE CASCADE,
       repeat_type VARCHAR(20) DEFAULT 'none',
       repeat_days INTEGER DEFAULT 1,
       repeat_weekdays INTEGER[] DEFAULT NULL,
+      due_time TIME,
+      notify_before_minutes INTEGER DEFAULT 60,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       is_active BOOLEAN DEFAULT TRUE
     )
