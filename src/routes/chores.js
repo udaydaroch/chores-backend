@@ -5,12 +5,6 @@ import { sendNotificationToAll } from '../services/notifications.js';
 
 const router = express.Router();
 
-const token = localStorage.getItem('chores_token');
-fetch('https://chores-backend.vercel.app/api/notifications/test', {
-  method: 'POST',
-  headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-}).then(r => r.json()).then(console.log)
-
 // Get chores for a specific date
 router.get('/', auth, async (req, res) => {
   try {
